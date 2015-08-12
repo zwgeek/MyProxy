@@ -10,10 +10,26 @@
 #include <arpa/inet.h>
 #include <errno.h>
 
-static int forward_port;
-
 #undef max
 #define max(x,y) ((x) > (y)?(x):(y))
+#define BUF_SIZE 1024
+#define SHUT_FD1 { \
+    if (fd1 >= 0) {   \
+        shutdown (fd1, SHUT_RDWR);  \
+        close (fd1);  \
+        fd1 = -1;     \
+    }   \
+}
+
+#define SHUT_FD2 { \
+    if (fd2 >= 0) {   \
+        shutdown (fd2, SHUT_RDWR);  \
+        close (fd2);  \
+        fd2 = -1;     \
+    }   \
+}
+
+static int forward_port;
 
 /**
  *filename:tcpforwardport.c
@@ -30,6 +46,7 @@ static int listen_socket(int listen_port)
     return -1;
   }
   yes = 1;
+
   /*设置快速重启*/
   if(setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes)) < 0){
     perror("setsockopt");
@@ -77,23 +94,7 @@ static connect_socket(int connect_port, char *address)
   }
   return s;
 }
-#define SHUT_FD1 { \
-    if (fd1 >= 0) {   \
-        shutdown (fd1, SHUT_RDWR);  \
-        close (fd1);  \
-        fd1 = -1;     \
-    }   \
-}
 
-#define SHUT_FD2 { \
-    if (fd2 >= 0) {   \
-        shutdown (fd2, SHUT_RDWR);  \
-        close (fd2);  \
-        fd2 = -1;     \
-    }   \
-}
-
-#define BUF_SIZE 1024
 
 int main(int argc, char *argv[])
 {
@@ -107,9 +108,11 @@ int main(int argc, char *argv[])
     fprintf(stderr, "usage\n\tfwd \n");
     exit(1);
   }
-  
+
+  //安全的屏蔽SIGPIPE中断信号
   signal(SIGPIPE, SIG_IGN);
   
+  //字符串转为整形
   forward_port = atoi(argv[2]);
   
   /*建立监听socket*/
@@ -119,6 +122,7 @@ int main(int argc, char *argv[])
 
   for( ; ; ){
     int r, nfds = 0;
+    //文件描述符集合
     fd_set rd, wr, er;
     FD_ZERO(&rd);
     FD_ZERO(&wr);
@@ -173,23 +177,24 @@ int main(int argc, char *argv[])
       memset(&client_address, 0, l = sizeof(client_address));
       r = accept(h, (struct sockaddr*)&client_address, &l);
       if(r < 0){
-	perror("accapt");
+        perror("accapt");
       }else{
-	/*关闭原有的连接，把新的连接作为fd1,同时连接新的目标fd2*/
-	SHUT_FD1;
-	SHUT_FD2;
-	buf1_avail = buf1_writen = 0;
-	buf2_avail = buf2_writen = 0;
-	fd1 = r;
-	fd2 = connect_socket(forward_port, argv[3]);
-	if(fd2 < 0){
-	  SHUT_FD1;
+	      /*关闭原有的连接，把新的连接作为fd1,同时连接新的目标fd2*/
+      	SHUT_FD1;
+      	SHUT_FD2;
+      	buf1_avail = buf1_writen = 0;
+      	buf2_avail = buf2_writen = 0;
+      	fd1 = r;
+      	fd2 = connect_socket(forward_port, argv[3]);
+      	if(fd2 < 0){
+      	  SHUT_FD1;
       	}else
-	    printf ("connect from %s\n", inet_ntoa(client_address.sin_addr));
+          printf ("connect from %s\n", inet_ntoa(client_address.sin_addr));
       }
     }
-       /* NB: read oob data before normal reads */
-        if (fd1 > 0)
+      /* NB: read oob data before normal reads */
+      /* 异常数据的处理 */
+      if (fd1 > 0)
         if (FD_ISSET (fd1, &er)) {
             char c;
             errno = 0;
@@ -200,7 +205,7 @@ int main(int argc, char *argv[])
                 send (fd2, &c, 1, MSG_OOB);
         }
 
-        if (fd2 > 0)
+      if (fd2 > 0)
         if (FD_ISSET (fd2, &er)) {
             char c;
             errno = 0;
@@ -211,8 +216,9 @@ int main(int argc, char *argv[])
                 send (fd1, &c, 1, MSG_OOB);
         }
 
-        /* NB: read data from fd1 */
-        if (fd1 > 0)
+      /* NB: read data from fd1 */
+      /* 读数据的处理 */
+      if (fd1 > 0)
         if (FD_ISSET (fd1, &rd)) {
             r = read (fd1, buf1 + buf1_avail, BUF_SIZE - buf1_avail);
             if (r < 1) {
@@ -221,8 +227,8 @@ int main(int argc, char *argv[])
                 buf1_avail += r;
         }
 
-        /* NB: read data from fd2 */
-        if (fd2 > 0)
+      /* NB: read data from fd2 */
+      if (fd2 > 0)
         if (FD_ISSET (fd2, &rd)) {
             r = read (fd2, buf2 + buf2_avail, BUF_SIZE - buf2_avail);
             if (r < 1) {
@@ -231,8 +237,9 @@ int main(int argc, char *argv[])
                 buf2_avail += r;
         }
 
-        /* NB: write data to fd1 */
-        if (fd1 > 0)
+      /* NB: write data to fd1 */
+      /* 写数据的处理 */
+      if (fd1 > 0)
         if (FD_ISSET (fd1, &wr)) {
             r = write (fd1, buf2 + buf2_writen, buf2_avail - buf2_writen);
             if (r < 1) {
@@ -241,8 +248,8 @@ int main(int argc, char *argv[])
                 buf2_writen += r;
         }
 
-        /* NB: write data to fd1 */
-        if (fd2 > 0)
+      /* NB: write data to fd1 */
+      if (fd2 > 0)
         if (FD_ISSET (fd2, &wr)) {
             r = write (fd2, buf1 + buf1_writen, buf1_avail - buf1_writen);
             if (r < 1) {
@@ -251,18 +258,18 @@ int main(int argc, char *argv[])
                 buf1_writen += r;
         }
 
-        /* check if write data has caught read data */
-        if (buf1_writen == buf1_avail) buf1_writen = buf1_avail = 0;
-        if (buf2_writen == buf2_avail) buf2_writen = buf2_avail = 0;
+      /* check if write data has caught read data */
+      if (buf1_writen == buf1_avail) buf1_writen = buf1_avail = 0;
+      if (buf2_writen == buf2_avail) buf2_writen = buf2_avail = 0;
 
-        /* one side has closed the connection, keep writing to the other side until empty */
-        if (fd1 < 0 && buf1_avail - buf1_writen == 0) {
-            SHUT_FD2;
-        }
-        if (fd2 < 0 && buf2_avail - buf2_writen == 0) {
-            SHUT_FD1;
-        }
+      /* one side has closed the connection, keep writing to the other side until empty */
+      if (fd1 < 0 && buf1_avail - buf1_writen == 0) {
+          SHUT_FD2;
+      }
+      if (fd2 < 0 && buf2_avail - buf2_writen == 0) {
+          SHUT_FD1;
+      }
     }
     return 0;   
- } 
-
+  } 
+}
