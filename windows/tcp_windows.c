@@ -3,8 +3,6 @@
 #include <winsock2.h>
 #pragma comment(lib, "ws2_32.lib")
 
-#undef max
-#define max(x,y) ((x) > (y)?(x):(y))
 #define BUF_SIZE 1024
 
 /**
@@ -13,43 +11,70 @@
  * 此环境下io逻辑比较复杂使用Thread做异步
  */
 
+//将DataBuf中的DataLen个字节发到s去
+int DataSend(SOCKET sock, char *DataBuf, int DataLen){
+	int nBytesLeft = DataLen;
+	int nBytesSent = 0;
+	int Ret;
+	//set socket to blocking mode
+ 	int iMode = 0;
+ 	ioctlsocket(sock, FIONBIO, (u_long FAR*) &iMode);
+
+ 	while(nBytesLeft > 0){
+ 		Ret = send(sock, DataBuf+nBytesSent, nBytesLeft, 0);
+ 		if(Ret <= 0)
+ 			break;
+ 		nBytesSent += Ret;
+ 		nBytesLeft -= Ret;
+ 	}
+ 	return nBytesSent;
+}
+
 //Mapping Port Proc
 DWORD WINAPI MappingPort(LPVOID lpParameter){
 	SOCKET MapSrcSocket = ((SOCKET*)lpParameter)[0];
 	SOCKET MapDstSocket = ((SOCKET*)lpParameter)[1];
-	int Ret = 0;
+	int Ret = 0, nRecv;
+	fd_set Fd_Read;
 	char RecvBuffer[BUF_SIZE];
 
 	while(true){
-		//Src to Dst
-		memset(RecvBuffer, 0x00, sizeof(RecvBuffer));
-		Ret = recv(MapDstSocket, RecvBuffer, BUF_SIZE, 0);
-		if(Ret == SOCKET_ERROR){
-			printf("Mapping is over :: recv_MapSrcSocket");
-			break;
+		FD_ZERO(&Fd_Read);
+		FD_SET(MapSrcSocket, &Fd_Read);
+		FD_SET(MapDstSocket, &Fd_Read);
+		Ret = select(0, &Fd_Read, NULL, NULL, NULL);
+		if(Ret <= 0){
+			printf("Init Select API Failed");
+			goto error;
 		}
-		Ret = send(MapSrcSocket, RecvBuffer, (int)strlen(RecvBuffer), 0);
-		if(Ret == SOCKET_ERROR){
-			printf("Mapping is over :: send_MapDstSocket");
-			break;
+		if(FD_ISSET(MapSrcSocket, &Fd_Read)){
+			nRecv = recv(MapSrcSocket, RecvBuffer, sizeof(RecvBuffer), 0);
+			if(nRecv <= 0){
+				printf("MapSrcSocket Recv Failed");
+				goto error;
+			}
+			Ret = DataSend(MapDstSocket, RecvBuffer, nRecv);
+			if(Ret == 0 || Ret != nRecv){
+				printf("MapSrcSocket Send Failed");
+				goto error;
+			}
 		}
-		//Dst to Src
-		memset(RecvBuffer, 0x00, sizeof(RecvBuffer));
-		Ret = recv(MapSrcSocket, RecvBuffer, BUF_SIZE, 0);
-		if(Ret == SOCKET_ERROR){
-			printf("Mapping is over :: recv_MapDstSocket");
-			break;
+		if(FD_ISSET(MapDstSocket, &Fd_Read)){
+			nRecv = recv(MapDstSocket, RecvBuffer, sizeof(RecvBuffer), 0);
+			if(nRecv <= 0){
+				printf("MapDstSocket Recv Failed");
+				goto error;
+			}
+			Ret = DataSend(MapSrcSocket, RecvBuffer, nRecv);
+			if(Ret == 0 || Ret != nRecv){
+				printf("MapDstSocket Send Failed");
+				goto error;
+			}
 		}
-		Ret = send(MapDstSocket, RecvBuffer, (int)strlen(RecvBuffer), 0);
-		if(Ret == SOCKET_ERROR){
-			printf("Mapping is over :: send_MapSrcSocket");
-			break;
-		}
-	}
-	//close
+	} //end while
+error:
 	closesocket(MapSrcSocket);
 	closesocket(MapDstSocket);
-
 	return 0;
 }
 
