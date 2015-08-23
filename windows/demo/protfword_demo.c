@@ -128,7 +128,8 @@ DWORD WINAPI TransmitData(LPVOID lParam)//在两个SOCKET中进行数据转发
  SOCKINFO socks = *((SOCKINFO*)lParam);
  SOCKET ClientSock = socks.ClientSock;
  SOCKET ServerSock = socks.ServerSock;
- char RecvBuf[MAXBUFSIZE] = {0}; fd_set Fd_Read;
+ char RecvBuf[MAXBUFSIZE] = {0}; 
+ fd_set Fd_Read;
  int ret, nRecv;
  while(1)
  {

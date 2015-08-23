@@ -1,6 +1,8 @@
 //this is a windows tcp swap
 #include <stdio.h>
 #include <winsock2.h>
+#include "logger.h"
+#include "prot_fword.h"
 #pragma comment(lib, "ws2_32.lib")
 
 #define BUF_SIZE 1024
@@ -38,36 +40,36 @@ DWORD WINAPI MappingPort(LPVOID lpParameter){
 	fd_set Fd_Read;
 	char RecvBuffer[BUF_SIZE];
 
-	while(true){
+	while(TRUE){
 		FD_ZERO(&Fd_Read);
 		FD_SET(MapSrcSocket, &Fd_Read);
 		FD_SET(MapDstSocket, &Fd_Read);
 		Ret = select(0, &Fd_Read, NULL, NULL, NULL);
 		if(Ret <= 0){
-			printf("Init Select API Failed");
+			fprintf(logger, "Init Select API Failed\n");
 			goto error;
 		}
 		if(FD_ISSET(MapSrcSocket, &Fd_Read)){
 			nRecv = recv(MapSrcSocket, RecvBuffer, sizeof(RecvBuffer), 0);
 			if(nRecv <= 0){
-				printf("MapSrcSocket Recv Failed");
+				fprintf(logger, "MapSrcSocket Recv Failed\n");
 				goto error;
 			}
 			Ret = DataSend(MapDstSocket, RecvBuffer, nRecv);
 			if(Ret == 0 || Ret != nRecv){
-				printf("MapSrcSocket Send Failed");
+				fprintf(logger, "MapSrcSocket Send Failed\n");
 				goto error;
 			}
 		}
 		if(FD_ISSET(MapDstSocket, &Fd_Read)){
 			nRecv = recv(MapDstSocket, RecvBuffer, sizeof(RecvBuffer), 0);
 			if(nRecv <= 0){
-				printf("MapDstSocket Recv Failed");
+				fprintf(logger, "MapDstSocket Recv Failed\n");
 				goto error;
 			}
 			Ret = DataSend(MapSrcSocket, RecvBuffer, nRecv);
 			if(Ret == 0 || Ret != nRecv){
-				printf("MapDstSocket Send Failed");
+				fprintf(logger, "MapDstSocket Send Failed\n");
 				goto error;
 			}
 		}
@@ -82,14 +84,24 @@ error:
 int main(int argc, char *argv[]){
 	WSADATA Ws;
 	SOCKET MainSocket, 	MapSrcSocket, MapDstSocket;
+	SOCKET Sockets[2];
 	struct sockaddr_in MainAddr, MapSrcAddr, MapDstAddr;
-	int Ret = 0;
+	int Ret = 0, nRecv;
 	int AddrLen = 0;
+	int nNetTimeout = 1000;
+	char Message[BUF_SIZE] = {0};
+	int DstPort;
 	HANDLE hThread = NULL;
+
+	//Init config.ini
+	getcfgs();
+	
+	//Init logger
+	logger = fopen(LOGGER_PATH, "at");
 
 	//Init Windows Socket  使用宏
 	if (WSAStartup(MAKEWORD(2,2), &Ws) != 0){
-		printf("Init Windows Socket Failed::%s\n",GetLastError());
+		fprintf(logger, "Init Windows Socket Failed::%s\n",GetLastError());
 		return -1;
 	}
 
@@ -107,58 +119,89 @@ int main(int argc, char *argv[]){
 	 */
 	MainSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (MainSocket == INVALID_SOCKET){
-		printf("Create MainSocket Failed::%s\n", GetLastError());
+		fprintf(logger, "Create MainSocket Failed::%s\n", GetLastError());
 		return -1;
 	}
 
 	//Bind Socket SOCKET_ERROR:0
 	Ret = bind(MainSocket, (struct sockaddr*)&MainAddr, sizeof(MainAddr));
 	if(Ret == SOCKET_ERROR){
-		printf("Bind MainSocket Failed::%s\n",GetLastError());
+		fprintf(logger, "Bind MainSocket Failed::%s\n",GetLastError());
 		return -1;
 	}
 
 	//Listen
 	Ret = listen(MainSocket, 20);
 	if (Ret == SOCKET_ERROR){
-		printf("Listen MainSocket Failed::%s\n",GetLastError());
+		fprintf(logger, "Listen MainSocket Failed::%s\n",GetLastError());
 		return -1;
 	}
 
-	printf("The Mapping-Server is starting\n");
+	fprintf(logger, "The Mapping-Server is starting\n");
 
 	//running
-	while(true){
+	while(TRUE){
 		AddrLen = sizeof(MapSrcAddr);
 		MapSrcSocket = accept(MainSocket, (struct sockaddr*)&MapSrcAddr, &AddrLen);
 		if (MapSrcSocket == INVALID_SOCKET){
-			printf("Accept Failed::%s\n",GetLastError());
+			fprintf(logger, "Accept Failed::%s\n",GetLastError());
 			break;
 		}
+		Sockets[0] = MapSrcSocket;
 
+		//Decide the Port and Init DstPort
+		//EWOULDBLOCK, EAGAIN ?
+		setsockopt(MapSrcSocket, SOL_SOCKET, SO_RCVTIMEO, (char*)&nNetTimeout,sizeof(int));
+		nRecv = recv(MapSrcSocket, Message, sizeof(Message), 0);
+		if(nRecv <= 0){
+			if(nRecv == -1){
+				fprintf(logger, "Init DstPort : 23\n");
+				DstPort = 23;
+			}else{
+				fprintf(logger, "MapSrcSocket Recv Failed\n");
+				break;
+			}
+		}else{
+			fprintf(logger, "Init DstPort\n");
+			DstPort = cfg_getprot(*Message);
+		}
+					
 		//Create MapDstSocket
 		MapDstSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if(MapDstSocket == INVALID_SOCKET){
-			printf("Create MapDstSocket Failed::%s\n", GetLastError());
+			fprintf(logger, "Create MapDstSocket Failed::%s\n", GetLastError());
 			break;
 		}
-		//  Windows sockaddr_in
+		//Windows sockaddr_in
 		MapDstAddr.sin_family = AF_INET;
 		MapDstAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-		MapDstAddr.sin_port = htons(23);
+		MapDstAddr.sin_port = htons(DstPort);
 		memset(MapDstAddr.sin_zero, 0x00, 8);
 		//Connect to Dst
 		Ret = connect(MapDstSocket, (struct sockaddr*)&MapDstAddr, sizeof(MapDstAddr));
 		if(Ret == SOCKET_ERROR){
-			printf("Connect Error::%s::\n", GetLastError());
+			fprintf(logger, "Connect Error::%s::\n", GetLastError());
 			break;
 		}
-		SOCKET Sockets[] = {MapSrcSocket, MapDstSocket};
+
+		//First Send Message
+		if(strlen(Message) != 0){
+			Ret = DataSend(MapDstSocket, Message, nRecv);
+			if(Ret == 0 || Ret != nRecv){
+				fprintf(logger, "MapSrcSocket Send Failed\n");
+				break;
+			}
+		}
+
+		Sockets[1] = MapDstSocket;
 		hThread = CreateThread(NULL, 0, MappingPort, (LPVOID)Sockets, 0, NULL);
 		if(hThread == NULL){
-			printf("Create Thread Failed!\n");
+			fprintf(logger, "Create Thread Failed!\n");
 			break;
 		}
+
+		//clear Message
+		memset(Message, 0x00, BUF_SIZE);
 	}
 	//close
 	closesocket(MainSocket);
