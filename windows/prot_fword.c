@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <winsock2.h>
 #include "logger.h"
-#include "prot_fword.h"
+#include "config_io.h"
 #pragma comment(lib, "ws2_32.lib")
 
 #define BUF_SIZE 1024
@@ -80,8 +80,8 @@ error:
 	return 0;
 }
 
-//main
-int main(int argc, char *argv[]){
+//main of ProtFword
+int ProtFword(){
 	WSADATA Ws;
 	SOCKET MainSocket, 	MapSrcSocket, MapDstSocket;
 	SOCKET Sockets[2];
