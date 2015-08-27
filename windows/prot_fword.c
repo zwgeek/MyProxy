@@ -89,7 +89,7 @@ int ProtFword(){
 	int Ret = 0, nRecv;
 	int AddrLen = 0;
 	int nNetTimeout = 1000;
-	char Message[BUF_SIZE] = {0};
+	char Message[BUF_SIZE];
 	int DstPort;
 	HANDLE hThread = NULL;
 
@@ -102,7 +102,7 @@ int ProtFword(){
 	//Init Windows Socket  使用宏
 	if (WSAStartup(MAKEWORD(2,2), &Ws) != 0){
 		fprintf(logger, "Init Windows Socket Failed::%s\n",GetLastError());
-		return -1;
+		goto error;
 	}
 
 	// Init Windows sockaddr_in
@@ -120,38 +120,41 @@ int ProtFword(){
 	MainSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (MainSocket == INVALID_SOCKET){
 		fprintf(logger, "Create MainSocket Failed::%s\n", GetLastError());
-		return -1;
+		goto error;
 	}
 
 	//Bind Socket SOCKET_ERROR:0
 	Ret = bind(MainSocket, (struct sockaddr*)&MainAddr, sizeof(MainAddr));
 	if(Ret == SOCKET_ERROR){
 		fprintf(logger, "Bind MainSocket Failed::%s\n",GetLastError());
-		return -1;
+		goto error;
 	}
 
 	//Listen
 	Ret = listen(MainSocket, 20);
 	if (Ret == SOCKET_ERROR){
 		fprintf(logger, "Listen MainSocket Failed::%s\n",GetLastError());
-		return -1;
+		goto error;
 	}
 
 	fprintf(logger, "The Mapping-Server is starting\n");
 
 	//running
 	while(TRUE){
-		AddrLen = sizeof(MapSrcAddr);
+		fflush(logger);
+		AddrLen = sizeof(MapSrcAddr);		
+		//clear Message
+		memset(Message, 0x00, BUF_SIZE);
 		MapSrcSocket = accept(MainSocket, (struct sockaddr*)&MapSrcAddr, &AddrLen);
 		if (MapSrcSocket == INVALID_SOCKET){
 			fprintf(logger, "Accept Failed::%s\n",GetLastError());
-			break;
+			continue;
 		}
 		Sockets[0] = MapSrcSocket;
 
 		//Decide the Port and Init DstPort
 		//EWOULDBLOCK, EAGAIN ?
-		setsockopt(MapSrcSocket, SOL_SOCKET, SO_RCVTIMEO, (char*)&nNetTimeout,sizeof(int));
+		setsockopt(MapSrcSocket, SOL_SOCKET, SO_RCVTIMEO, (char*)&nNetTimeout, sizeof(int));
 		nRecv = recv(MapSrcSocket, Message, sizeof(Message), 0);
 		if(nRecv <= 0){
 			if(nRecv == -1){
@@ -159,18 +162,22 @@ int ProtFword(){
 				DstPort = 23;
 			}else{
 				fprintf(logger, "MapSrcSocket Recv Failed\n");
-				break;
+				continue;
 			}
 		}else{
 			fprintf(logger, "Init DstPort\n");
 			DstPort = cfg_getprot(*Message);
 		}
-					
+
+		if(DstPort == 0){
+			fprintf(logger,"Don't hava the serives\n");
+			continue;
+		}		
 		//Create MapDstSocket
 		MapDstSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if(MapDstSocket == INVALID_SOCKET){
 			fprintf(logger, "Create MapDstSocket Failed::%s\n", GetLastError());
-			break;
+			continue;
 		}
 		//Windows sockaddr_in
 		MapDstAddr.sin_family = AF_INET;
@@ -181,7 +188,7 @@ int ProtFword(){
 		Ret = connect(MapDstSocket, (struct sockaddr*)&MapDstAddr, sizeof(MapDstAddr));
 		if(Ret == SOCKET_ERROR){
 			fprintf(logger, "Connect Error::%s::\n", GetLastError());
-			break;
+			continue;
 		}
 
 		//First Send Message
@@ -189,7 +196,7 @@ int ProtFword(){
 			Ret = DataSend(MapDstSocket, Message, nRecv);
 			if(Ret == 0 || Ret != nRecv){
 				fprintf(logger, "MapSrcSocket Send Failed\n");
-				break;
+				continue;
 			}
 		}
 
@@ -197,16 +204,14 @@ int ProtFword(){
 		hThread = CreateThread(NULL, 0, MappingPort, (LPVOID)Sockets, 0, NULL);
 		if(hThread == NULL){
 			fprintf(logger, "Create Thread Failed!\n");
-			break;
+			continue;
 		}
-
-		//clear Message
-		memset(Message, 0x00, BUF_SIZE);
 	}
+error:
 	//close
 	closesocket(MainSocket);
+	fclose(logger);
 	WSACleanup();
-
 	return 0;
 }
 

@@ -51,7 +51,7 @@ int cfgs_getprot(char protocol[]){
 int cfg_getprot(char protocol){
 	int i;
 	for(i=0; i<=num; i++)
-		if(cfg[i].protocol[0] == protocol)
-			break;
-	return atoi(cfg[i].prot);
+		if(cfg[i].protocol[0] == protocol)			
+			return atoi(cfg[i].prot);
+	return 0;
 }
