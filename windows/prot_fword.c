@@ -75,6 +75,7 @@ DWORD WINAPI MappingPort(LPVOID lpParameter){
 		}
 	} //end while
 error:
+	fflush(logger);
 	closesocket(MapSrcSocket);
 	closesocket(MapDstSocket);
 	return 0;
@@ -202,10 +203,8 @@ int ProtFword(){
 
 		Sockets[1] = MapDstSocket;
 		hThread = CreateThread(NULL, 0, MappingPort, (LPVOID)Sockets, 0, NULL);
-		if(hThread == NULL){
+		if(hThread == NULL)
 			fprintf(logger, "Create Thread Failed!\n");
-			continue;
-		}
 	}
 error:
 	//close
