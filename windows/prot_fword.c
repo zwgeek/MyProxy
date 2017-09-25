@@ -1,11 +1,12 @@
 //this is a windows tcp swap
 #include <stdio.h>
 #include <winsock2.h>
-#include "logger.h"
 #include "config_io.h"
 #pragma comment(lib, "ws2_32.lib")
 
 #define BUF_SIZE 1024
+#define LOGGER_PATH	"logger.txt"
+FILE *logger;
 
 /**
  * system : windows

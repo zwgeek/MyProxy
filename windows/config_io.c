@@ -1,9 +1,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h> 
-#include "logger.h"
 #include "config_io.h"
 #define FILE_PATH "config.ini"
+
+extern FILE *logger;
 
 /**
  * used : read config file
